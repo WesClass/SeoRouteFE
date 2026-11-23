@@ -1,0 +1,7 @@
+/build/
+/release/
+/debug/
+*.apk
+*.aab
+*.jks
+*.keystore
