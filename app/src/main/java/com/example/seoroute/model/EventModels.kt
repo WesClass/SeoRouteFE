@@ -1,8 +1,12 @@
 package com.example.seoroute.model
 
 import androidx.annotation.DrawableRes
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
 import com.example.seoroute.R
+import com.example.seoroute.network.ApiNotificationDto
+import com.example.seoroute.network.SeoRouteApiClient
 import com.example.seoroute.ui.theme.SeoBookingBg
 import com.example.seoroute.ui.theme.SeoBookingText
 import com.example.seoroute.ui.theme.SeoFilterChipBg
@@ -322,21 +326,21 @@ object SampleEvents {
         ticketDateTime = "Nov 21, 2026 · 4:30 PM"
     )
 
-    val exploreEvents = listOf(
+    val exploreEvents = mutableStateListOf(
         seoulCultureNight,
         museumAfterHours,
         futureSeoulMeetup,
         autumnGardenWalk
     )
 
-    val savedEvents = listOf(
+    val savedEvents = mutableStateListOf(
         museumAfterHours,
         seoulCultureNight,
         futureSeoulMeetup,
         autumnGardenWalk
     )
 
-    val myTickets = listOf(
+    val myTickets = mutableStateListOf(
         BookedTicket(
             id = "ticket_future_seoul",
             event = futureSeoulMeetup,
@@ -350,4 +354,37 @@ object SampleEvents {
             isHeroLayout = false
         )
     )
+
+    val liveNotifications = mutableStateListOf<ApiNotificationDto>()
+    val isLiveBackendSynced = mutableStateOf(false)
+
+    suspend fun syncFromBackend() {
+        SeoRouteApiClient.fetchPublicEvents().onSuccess { remoteEvents ->
+            if (remoteEvents.isNotEmpty()) {
+                exploreEvents.clear()
+                exploreEvents.addAll(remoteEvents)
+                isLiveBackendSynced.value = true
+            }
+        }
+        if (!SeoRouteApiClient.accessToken.isNullOrBlank()) {
+            SeoRouteApiClient.fetchMyTickets().onSuccess { remoteTickets ->
+                if (remoteTickets.isNotEmpty()) {
+                    myTickets.clear()
+                    myTickets.addAll(remoteTickets)
+                }
+            }
+            SeoRouteApiClient.fetchMyInterests().onSuccess { remoteInterests ->
+                if (remoteInterests.isNotEmpty()) {
+                    savedEvents.clear()
+                    savedEvents.addAll(remoteInterests)
+                }
+            }
+            SeoRouteApiClient.fetchNotifications().onSuccess { remoteNotifs ->
+                if (remoteNotifs.isNotEmpty()) {
+                    liveNotifications.clear()
+                    liveNotifications.addAll(remoteNotifs)
+                }
+            }
+        }
+    }
 }

@@ -29,7 +29,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -216,11 +218,16 @@ fun SignInScreen(
     onSignInSuccess: () -> Unit,
     onCreateAccountClick: () -> Unit,
     onForgotPasswordClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOrganizerSignInSuccess: () -> Unit = onSignInSuccess,
+    onTicketingSignInSuccess: () -> Unit = onOrganizerSignInSuccess,
+    onAdminSignInSuccess: () -> Unit = onOrganizerSignInSuccess
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isLoading by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
 
     Column(
         modifier = modifier
@@ -310,13 +317,28 @@ fun SignInScreen(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // Primary "Sign in" button with dummy auth validation
+            // Primary "Sign in" button with live backend auth (/api/v1/auth/dev) & local fallback
             AuthPrimaryButton(
-                text = "Sign in",
+                text = if (isLoading) "Signing in..." else "Sign in",
                 onClick = {
-                    DummyAuthRepository.signIn(email, password)
-                        .onSuccess { onSignInSuccess() }
-                        .onFailure { err -> errorMessage = err.message }
+                    if (!isLoading) {
+                        isLoading = true
+                        errorMessage = null
+                        coroutineScope.launch {
+                            val result = DummyAuthRepository.signInRemoteOrLocal(email, password)
+                            isLoading = false
+                            result
+                                .onSuccess { user ->
+                                    when {
+                                        user.isAdmin -> onAdminSignInSuccess()
+                                        user.isTicketingStaffOnly -> onTicketingSignInSuccess()
+                                        user.isOrganizer -> onOrganizerSignInSuccess()
+                                        else -> onSignInSuccess()
+                                    }
+                                }
+                                .onFailure { err -> errorMessage = err.message }
+                        }
+                    }
                 }
             )
 
@@ -327,36 +349,113 @@ fun SignInScreen(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // "Continue with Google" button (instant dummy Google sign-in)
+            // "Continue with Google" button (live backend attendee session or local fallback)
             ContinueWithGoogleButton(
                 onClick = {
-                    DummyAuthRepository.signInWithGoogle()
-                    onSignInSuccess()
+                    if (!isLoading) {
+                        isLoading = true
+                        coroutineScope.launch {
+                            DummyAuthRepository.signInWithGoogleRemoteOrLocal()
+                            isLoading = false
+                            onSignInSuccess()
+                        }
+                    }
                 }
             )
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // Helpful demo helper chip for quick testing without typing
-            Row(
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .clip(RoundedCornerShape(50))
-                    .background(SeoPrimaryLight)
-                    .clickable {
-                        email = DummyAuthRepository.demoAccount.email
-                        password = DummyAuthRepository.demoAccount.password
-                        errorMessage = null
-                    }
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+            // Helpful demo helper chips for quick Attendee, Organizer, or Gate Ticketing testing
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = "Demo login: ${DummyAuthRepository.demoAccount.email} (tap to fill)",
-                    color = SeoPrimary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(SeoPrimaryLight)
+                            .clickable {
+                                email = DummyAuthRepository.demoAccount.email
+                                password = DummyAuthRepository.demoAccount.password
+                                errorMessage = null
+                            }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "Demo User (tap to fill)",
+                            color = SeoPrimary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(SeoGreenBg)
+                            .clickable {
+                                email = DummyAuthRepository.demoOrganizerAccount.email
+                                password = DummyAuthRepository.demoOrganizerAccount.password
+                                errorMessage = null
+                            }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "Demo Organizer (tap to fill)",
+                            color = SeoGreenText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(Color(0xFFEEF2FF))
+                            .clickable {
+                                email = DummyAuthRepository.demoTicketingAccount.email
+                                password = DummyAuthRepository.demoTicketingAccount.password
+                                errorMessage = null
+                            }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "Demo Gate Staff (tap to fill)",
+                            color = Color(0xFF4F46E5),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(Color(0xFFFFFBEB))
+                            .clickable {
+                                email = DummyAuthRepository.demoAdminAccount.email
+                                password = DummyAuthRepository.demoAdminAccount.password
+                                errorMessage = null
+                            }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "Demo Admin (tap to fill)",
+                            color = Color(0xFFB45309),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(32.dp))
@@ -472,6 +571,8 @@ fun CreateAccountScreen(
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isLoading by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
 
     Column(
         modifier = modifier
@@ -551,11 +652,19 @@ fun CreateAccountScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             AuthPrimaryButton(
-                text = "Create account",
+                text = if (isLoading) "Creating account..." else "Create account",
                 onClick = {
-                    DummyAuthRepository.createAccount(username, email, password)
-                        .onSuccess { onCreateAccountSuccess() }
-                        .onFailure { err -> errorMessage = err.message }
+                    if (!isLoading) {
+                        isLoading = true
+                        errorMessage = null
+                        coroutineScope.launch {
+                            val result = DummyAuthRepository.createAccountRemoteOrLocal(username, email, password)
+                            isLoading = false
+                            result
+                                .onSuccess { onCreateAccountSuccess() }
+                                .onFailure { err -> errorMessage = err.message }
+                        }
+                    }
                 }
             )
 
@@ -567,8 +676,14 @@ fun CreateAccountScreen(
 
             ContinueWithGoogleButton(
                 onClick = {
-                    DummyAuthRepository.signInWithGoogle()
-                    onCreateAccountSuccess()
+                    if (!isLoading) {
+                        isLoading = true
+                        coroutineScope.launch {
+                            DummyAuthRepository.signInWithGoogleRemoteOrLocal()
+                            isLoading = false
+                            onCreateAccountSuccess()
+                        }
+                    }
                 }
             )
 

@@ -51,10 +51,7 @@ import com.example.seoroute.ui.theme.SeoSurface
 import com.example.seoroute.ui.theme.SeoTextPrimary
 import com.example.seoroute.ui.theme.SeoTextSecondary
 
-/**
- * 03_Discover 3 screen implementation (Figma node 109:41).
- * Uses the modular [SeoRouteBottomNavBar] in its Scaffold bottomBar.
- */
+// Discover Page
 @Composable
 fun DiscoverScreen(
     selectedVibe: VibeCategory,
@@ -175,11 +172,12 @@ fun DiscoverScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Featured Event Card
+            // Featured Event Card (shows live backend event when synced, or default seoulCultureNight)
+            val featuredEvent = SampleEvents.exploreEvents.firstOrNull() ?: SampleEvents.seoulCultureNight
             FeaturedEventCard(
-                event = SampleEvents.seoulCultureNight,
+                event = featuredEvent,
                 badgeText = "WEEKEND PICK",
-                onClick = { onEventClick(SampleEvents.seoulCultureNight) }
+                onClick = { onEventClick(featuredEvent) }
             )
 
             Spacer(modifier = Modifier.height(22.dp))
@@ -193,10 +191,11 @@ fun DiscoverScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Happening soon card ("Art in the City")
+            // Happening soon card (shows second live backend event when synced, or artInTheCity)
+            val happeningSoonEvent = SampleEvents.exploreEvents.getOrNull(1) ?: SampleEvents.artInTheCity
             EventHorizontalCard(
-                event = SampleEvents.artInTheCity,
-                onClick = { onEventClick(SampleEvents.artInTheCity) }
+                event = happeningSoonEvent,
+                onClick = { onEventClick(happeningSoonEvent) }
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -297,7 +296,6 @@ private fun FeaturedEventCard(
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
         )
-        // Dark gradient overlay matching Figma node 109:97
         Box(
             modifier = Modifier
                 .fillMaxSize()

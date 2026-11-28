@@ -58,6 +58,7 @@ fun UserProfileScreen(
     onMyReservationsClick: () -> Unit = {},
     onNotificationsClick: () -> Unit = {},
     onSignOutClick: () -> Unit = {},
+    onOrganizerStudioClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val currentUser = DummyAuthRepository.currentUser.value
@@ -186,6 +187,13 @@ fun UserProfileScreen(
                     title = "Notifications",
                     onClick = onNotificationsClick
                 )
+                if (onOrganizerStudioClick != null) {
+                    ProfileMenuCard(
+                        iconRes = R.drawable.ic_org_nav_overview,
+                        title = "Organizer Studio",
+                        onClick = onOrganizerStudioClick
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(22.dp))

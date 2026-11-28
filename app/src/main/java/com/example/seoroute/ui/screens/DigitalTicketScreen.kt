@@ -24,6 +24,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import com.example.seoroute.R
 import com.example.seoroute.model.SampleEvents
 import com.example.seoroute.model.SeoEvent
+import com.example.seoroute.network.SeoRouteApiClient
 import com.example.seoroute.ui.theme.SeoBackground
 import com.example.seoroute.ui.theme.SeoBorder
 import com.example.seoroute.ui.theme.SeoGreenBg
@@ -84,6 +90,22 @@ fun DigitalTicketScreen(
     onDoneClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var dynamicBookingCode by remember(event.bookingCode) { mutableStateOf(event.bookingCode) }
+
+    LaunchedEffect(event.id) {
+        val matchedTicket = SampleEvents.myTickets.firstOrNull { it.event.id == event.id }
+        if (matchedTicket != null && !SeoRouteApiClient.accessToken.isNullOrBlank()) {
+            SeoRouteApiClient.fetchTicketQr(matchedTicket.id).onSuccess { qrPayload ->
+                val rotated = SeoRouteApiClient.generateDynamicQrToken(
+                    ticketId = qrPayload.ticketId,
+                    ticketSecret = qrPayload.ticketSecret,
+                    periodSecs = qrPayload.periodSecs
+                )
+                dynamicBookingCode = "HMAC QR · ${rotated.take(22)}..."
+            }
+        }
+    }
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = SeoBackground
@@ -229,7 +251,7 @@ fun DigitalTicketScreen(
 
                         // Booking Code
                         Text(
-                            text = event.bookingCode,
+                            text = dynamicBookingCode,
                             color = SeoTextPrimary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,

@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,7 +40,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.seoroute.R
 import com.example.seoroute.model.NavTab
+import com.example.seoroute.model.SampleEvents
+import com.example.seoroute.network.SeoRouteApiClient
 import com.example.seoroute.ui.components.SelectableFilterPill
+import kotlinx.coroutines.launch
 import com.example.seoroute.ui.components.SeoRouteBottomNavBar
 import com.example.seoroute.ui.theme.SeoBackground
 import com.example.seoroute.ui.theme.SeoBorder
@@ -106,13 +110,42 @@ fun NotificationsScreen(
 ) {
     var selectedFilter by remember { mutableStateOf("All") }
     val filters = listOf("All", "Bookings", "Weather")
+    val coroutineScope = rememberCoroutineScope()
 
-    val displayedNotifications = remember(selectedFilter) {
-        if (selectedFilter == "All") {
-            sampleNotifications
-        } else {
-            sampleNotifications.filter { it.category == selectedFilter }
+    val liveNotifications = SampleEvents.liveNotifications
+    val allItems = if (liveNotifications.isNotEmpty()) {
+        liveNotifications.map { dto ->
+            val isWeather = dto.type.contains("weather", ignoreCase = true)
+            val isUpdated = dto.type.contains("update", ignoreCase = true)
+            val bodySentences = dto.body.split(". ").filter { it.isNotBlank() }
+            NotificationItemData(
+                id = dto.id,
+                category = if (isWeather) "Weather" else "Bookings",
+                title = dto.title,
+                line1 = bodySentences.firstOrNull() ?: dto.body,
+                line2 = bodySentences.drop(1).joinToString(". "),
+                timestamp = if (dto.isRead) "Read" else "Live · Unread",
+                actionLabel = if (isUpdated) "View update" else null,
+                iconRes = when {
+                    isWeather -> R.drawable.ic_notif_rain
+                    isUpdated -> R.drawable.ic_notif_megaphone
+                    else -> R.drawable.ic_notif_check
+                },
+                iconCircleColor = when {
+                    isWeather -> Color(0xFFFFF0E9)
+                    isUpdated -> SeoPrimaryLight
+                    else -> Color(0xFFE6FAF3)
+                }
+            )
         }
+    } else {
+        sampleNotifications
+    }
+
+    val displayedNotifications = if (selectedFilter == "All") {
+        allItems
+    } else {
+        allItems.filter { it.category == selectedFilter }
     }
 
     Scaffold(
@@ -184,9 +217,18 @@ fun NotificationsScreen(
                     NotificationCard(
                         item = item,
                         onCardClick = {
-                            if (item.id == "notif_confirmed") {
+                            if (liveNotifications.any { it.id == item.id }) {
+                                coroutineScope.launch {
+                                    SeoRouteApiClient.markNotificationRead(item.id)
+                                    val idx = liveNotifications.indexOfFirst { it.id == item.id }
+                                    if (idx >= 0) {
+                                        liveNotifications[idx] = liveNotifications[idx].copy(isRead = true)
+                                    }
+                                }
+                            }
+                            if (item.id == "notif_confirmed" || item.category == "Bookings") {
                                 onReservationNotificationClick()
-                            } else if (item.id == "notif_update") {
+                            } else if (item.id == "notif_update" || item.actionLabel != null) {
                                 onViewUpdateClick()
                             }
                         },

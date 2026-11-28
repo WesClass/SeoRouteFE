@@ -8,20 +8,37 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
+import com.example.seoroute.model.AdminNavTab
+import com.example.seoroute.model.DummyAuthRepository
 import com.example.seoroute.model.EventDetailType
 import com.example.seoroute.model.NavTab
+import com.example.seoroute.model.OrganizerEventItem
+import com.example.seoroute.model.OrganizerNavTab
+import com.example.seoroute.model.OrganizerRepository
 import com.example.seoroute.model.SampleEvents
 import com.example.seoroute.model.SeoEvent
 import com.example.seoroute.model.VibeCategory
+import com.example.seoroute.network.SeoRouteApiClient
+import kotlinx.coroutines.launch
+import com.example.seoroute.ui.screens.AdminConsoleScreen
+import com.example.seoroute.ui.screens.AdminManageOrganizersScreen
+import com.example.seoroute.ui.screens.AdminOverviewScreen
+import com.example.seoroute.ui.screens.AttendeeManagementScreen
 import com.example.seoroute.ui.screens.BookingSuccessScreen
+import com.example.seoroute.ui.screens.CheckInResultScreen
+import com.example.seoroute.ui.screens.CheckInScannerScreen
 import com.example.seoroute.ui.screens.ConfirmBookingScreen
 import com.example.seoroute.ui.screens.CreateAccountScreen
+import com.example.seoroute.ui.screens.CreateEditEventScreen
 import com.example.seoroute.ui.screens.DigitalTicketScreen
 import com.example.seoroute.ui.screens.DiscoverScreen
 import com.example.seoroute.ui.screens.ExploreEventsScreen
@@ -29,6 +46,9 @@ import com.example.seoroute.ui.screens.ForgotPasswordScreen
 import com.example.seoroute.ui.screens.ManagedEventDetailScreen
 import com.example.seoroute.ui.screens.MyTicketsScreen
 import com.example.seoroute.ui.screens.NotificationsScreen
+import com.example.seoroute.ui.screens.OrganizerDashboardScreen
+import com.example.seoroute.ui.screens.OrganizerProfileStaffScreen
+import com.example.seoroute.ui.screens.OrganizerViewEventsScreen
 import com.example.seoroute.ui.screens.PublicEventDetailScreen
 import com.example.seoroute.ui.screens.SavedEventsScreen
 import com.example.seoroute.ui.screens.SignInScreen
@@ -52,6 +72,29 @@ sealed interface SeoRouteDestination {
     data object SavedEvents : SeoRouteDestination
     data object Notifications : SeoRouteDestination
     data object UserProfile : SeoRouteDestination
+
+    // Organizer Studio & Ticketing Staff Destinations
+    data object OrganizerDashboard : SeoRouteDestination
+    data object OrganizerViewEvents : SeoRouteDestination
+    data class OrganizerCreateEditEvent(
+        val event: OrganizerEventItem = OrganizerRepository.createDefaultNewEvent()
+    ) : SeoRouteDestination
+    data class OrganizerProfileStaff(
+        val activeTab: OrganizerNavTab = OrganizerNavTab.PROFILE
+    ) : SeoRouteDestination
+    data class AttendeeManagement(
+        val eventTitle: String = "Future Seoul Meetup"
+    ) : SeoRouteDestination
+    data object CheckInScanner : SeoRouteDestination
+    data class CheckInResult(
+        val attendeeName: String = "Jin Park",
+        val eventTitle: String = "Future Seoul Meetup"
+    ) : SeoRouteDestination
+
+    // Admin Application Destinations
+    data object AdminOverview : SeoRouteDestination
+    data object AdminConsole : SeoRouteDestination
+    data object AdminManageOrganizers : SeoRouteDestination
 }
 
 class MainActivity : ComponentActivity() {
@@ -77,6 +120,9 @@ fun SeoRouteApp(
 ) {
     var currentDestination by remember { mutableStateOf(initialDestination) }
     var previousListDestination by remember { mutableStateOf<SeoRouteDestination>(SeoRouteDestination.Discover) }
+    var previousOrganizerDestination by remember {
+        mutableStateOf<SeoRouteDestination>(SeoRouteDestination.OrganizerDashboard)
+    }
     var selectedNavTab by remember {
         mutableStateOf(
             when (initialDestination) {
@@ -88,6 +134,14 @@ fun SeoRouteApp(
         )
     }
     var selectedVibe by remember { mutableStateOf(VibeCategory.MUSIC) }
+    val coroutineScope = rememberCoroutineScope()
+    val appContext = LocalContext.current.applicationContext
+
+    // Initialize DataStore token persistence & fetch live public events from BuildConfig.BASE_URL on startup
+    LaunchedEffect(Unit) {
+        SeoRouteApiClient.initDataStore(appContext)
+        SampleEvents.syncFromBackend()
+    }
 
     val handleBottomNavTabSelected: (NavTab) -> Unit = { tab ->
         selectedNavTab = tab
@@ -96,6 +150,34 @@ fun SeoRouteApp(
             NavTab.SAVED -> SeoRouteDestination.SavedEvents
             NavTab.TICKETS -> SeoRouteDestination.MyTickets
             NavTab.PROFILE -> SeoRouteDestination.UserProfile
+        }
+    }
+
+    val isTicketingStaffOnly = DummyAuthRepository.currentUser.value?.isTicketingStaffOnly == true
+
+    val handleOrganizerNavTabSelected: (OrganizerNavTab) -> Unit = { tab ->
+        if (DummyAuthRepository.currentUser.value?.isTicketingStaffOnly == true) {
+            // Ticketing staff role can only access the Attendee check-in & Scanner flow
+            currentDestination = SeoRouteDestination.AttendeeManagement(
+                eventTitle = OrganizerRepository.getCurrentAssignedEvent().title
+            )
+        } else {
+            currentDestination = when (tab) {
+                OrganizerNavTab.OVERVIEW -> SeoRouteDestination.OrganizerDashboard
+                OrganizerNavTab.EVENTS -> SeoRouteDestination.OrganizerViewEvents
+                OrganizerNavTab.PEOPLE -> SeoRouteDestination.AttendeeManagement(
+                    eventTitle = OrganizerRepository.getCurrentAssignedEvent().title
+                )
+                OrganizerNavTab.PROFILE -> SeoRouteDestination.OrganizerProfileStaff(activeTab = OrganizerNavTab.PROFILE)
+            }
+        }
+    }
+
+    val handleAdminNavTabSelected: (AdminNavTab) -> Unit = { tab ->
+        currentDestination = when (tab) {
+            AdminNavTab.OVERVIEW -> SeoRouteDestination.AdminOverview
+            AdminNavTab.EVENTS -> SeoRouteDestination.AdminConsole
+            AdminNavTab.PEOPLE -> SeoRouteDestination.AdminManageOrganizers
         }
     }
 
@@ -108,7 +190,13 @@ fun SeoRouteApp(
         }
     }
 
-    BackHandler(enabled = currentDestination !is SeoRouteDestination.Welcome && currentDestination !is SeoRouteDestination.Discover) {
+    BackHandler(
+        enabled = currentDestination !is SeoRouteDestination.Welcome &&
+            currentDestination !is SeoRouteDestination.Discover &&
+            currentDestination !is SeoRouteDestination.OrganizerDashboard &&
+            currentDestination !is SeoRouteDestination.AdminOverview &&
+            !(isTicketingStaffOnly && currentDestination is SeoRouteDestination.AttendeeManagement)
+    ) {
         currentDestination = when (val dest = currentDestination) {
             is SeoRouteDestination.SignIn -> SeoRouteDestination.Welcome
             is SeoRouteDestination.ForgotPassword,
@@ -144,8 +232,18 @@ fun SeoRouteApp(
                 selectedNavTab = NavTab.DISCOVER
                 SeoRouteDestination.Discover
             }
+            is SeoRouteDestination.OrganizerViewEvents,
+            is SeoRouteDestination.OrganizerProfileStaff,
+            is SeoRouteDestination.AttendeeManagement -> SeoRouteDestination.OrganizerDashboard
+            is SeoRouteDestination.CheckInScanner -> SeoRouteDestination.AttendeeManagement()
+            is SeoRouteDestination.CheckInResult -> SeoRouteDestination.AttendeeManagement()
+            is SeoRouteDestination.OrganizerCreateEditEvent -> previousOrganizerDestination
+            is SeoRouteDestination.AdminConsole,
+            is SeoRouteDestination.AdminManageOrganizers -> SeoRouteDestination.AdminOverview
             SeoRouteDestination.Welcome,
-            SeoRouteDestination.Discover -> dest
+            SeoRouteDestination.Discover,
+            SeoRouteDestination.OrganizerDashboard,
+            SeoRouteDestination.AdminOverview -> dest
         }
     }
 
@@ -167,6 +265,17 @@ fun SeoRouteApp(
                 onSignInSuccess = {
                     selectedNavTab = NavTab.DISCOVER
                     currentDestination = SeoRouteDestination.Discover
+                },
+                onOrganizerSignInSuccess = {
+                    currentDestination = SeoRouteDestination.OrganizerDashboard
+                },
+                onTicketingSignInSuccess = {
+                    currentDestination = SeoRouteDestination.AttendeeManagement(
+                        eventTitle = OrganizerRepository.getCurrentAssignedEvent().title
+                    )
+                },
+                onAdminSignInSuccess = {
+                    currentDestination = SeoRouteDestination.AdminOverview
                 },
                 onCreateAccountClick = {
                     currentDestination = SeoRouteDestination.CreateAccount
@@ -278,6 +387,18 @@ fun SeoRouteApp(
                     }
                 },
                 onConfirmBooking = {
+                    coroutineScope.launch {
+                        val evt = destination.event
+                        if (evt.admissionType == "Free open") {
+                            SeoRouteApiClient.addInterest(evt.id)
+                        } else {
+                            SeoRouteApiClient.bookEvent(
+                                eventId = evt.id,
+                                isPaid = !evt.isFree
+                            )
+                        }
+                        SampleEvents.syncFromBackend()
+                    }
                     currentDestination = SeoRouteDestination.BookingSuccess(destination.event)
                 },
                 modifier = modifier
@@ -363,9 +484,215 @@ fun SeoRouteApp(
                 onNotificationsClick = {
                     currentDestination = SeoRouteDestination.Notifications
                 },
+                onOrganizerStudioClick = null,
                 onSignOutClick = {
                     currentDestination = SeoRouteDestination.SignIn
                 },
+                modifier = modifier
+            )
+        }
+
+        is SeoRouteDestination.OrganizerDashboard -> {
+            OrganizerDashboardScreen(
+                selectedNavTab = OrganizerNavTab.OVERVIEW,
+                onNavTabSelected = handleOrganizerNavTabSelected,
+                onCreateEventClick = {
+                    previousOrganizerDestination = SeoRouteDestination.OrganizerDashboard
+                    currentDestination = SeoRouteDestination.OrganizerCreateEditEvent(
+                        OrganizerRepository.createDefaultNewEvent()
+                    )
+                },
+                onScanTicketClick = {
+                    currentDestination = SeoRouteDestination.CheckInScanner
+                },
+                onSeeAllEventsClick = {
+                    currentDestination = SeoRouteDestination.OrganizerViewEvents
+                },
+                onEditEventClick = { event ->
+                    previousOrganizerDestination = SeoRouteDestination.OrganizerDashboard
+                    currentDestination = SeoRouteDestination.OrganizerCreateEditEvent(event)
+                },
+                onSignOutClick = {
+                    currentDestination = SeoRouteDestination.SignIn
+                },
+                modifier = modifier
+            )
+        }
+
+        is SeoRouteDestination.OrganizerViewEvents -> {
+            OrganizerViewEventsScreen(
+                selectedNavTab = OrganizerNavTab.EVENTS,
+                onNavTabSelected = handleOrganizerNavTabSelected,
+                onEditEventClick = { event ->
+                    previousOrganizerDestination = SeoRouteDestination.OrganizerViewEvents
+                    currentDestination = SeoRouteDestination.OrganizerCreateEditEvent(event)
+                },
+                modifier = modifier
+            )
+        }
+
+        is SeoRouteDestination.OrganizerCreateEditEvent -> {
+            var saving by remember(destination.event.id) { mutableStateOf(false) }
+            var saveError by remember(destination.event.id) { mutableStateOf<String?>(null) }
+            val fromAdmin = previousOrganizerDestination == SeoRouteDestination.AdminConsole
+            CreateEditEventScreen(
+                initialEvent = destination.event,
+                saving = saving,
+                saveError = saveError,
+                onBackClick = {
+                    currentDestination = previousOrganizerDestination
+                },
+                onSaveAndPublish = { savedEvent ->
+                    val isNew = savedEvent.id.startsWith("org_new_")
+                    when {
+                        fromAdmin && isNew -> saveError = "Creating events as an admin requires backend support."
+                        !fromAdmin && !isNew && savedEvent.id.startsWith("org_") -> {
+                            OrganizerRepository.saveOrUpdateEvent(savedEvent)
+                            currentDestination = SeoRouteDestination.OrganizerViewEvents
+                        }
+                        !saving -> {
+                            saving = true
+                            saveError = null
+                            coroutineScope.launch {
+                                val result = if (isNew) SeoRouteApiClient.createOrganizerEvent(savedEvent)
+                                else SeoRouteApiClient.updateOrganizerEvent(savedEvent)
+                                saving = false
+                                result.onSuccess {
+                                    if (currentDestination == destination) {
+                                        currentDestination = if (fromAdmin) SeoRouteDestination.AdminConsole
+                                        else SeoRouteDestination.OrganizerViewEvents
+                                    }
+                                    if (!fromAdmin) OrganizerRepository.syncFromBackend()
+                                    SampleEvents.syncFromBackend()
+                                }.onFailure { saveError = it.message ?: "Could not save the event." }
+                            }
+                        }
+                        else -> Unit
+                    }
+                },
+                onDeleteEvent = { eventId ->
+                    OrganizerRepository.deleteEvent(eventId)
+                    coroutineScope.launch {
+                        if (!eventId.startsWith("org_")) {
+                            SeoRouteApiClient.cancelOrganizerEvent(eventId)
+                            OrganizerRepository.syncFromBackend()
+                        }
+                    }
+                    currentDestination = previousOrganizerDestination
+                },
+                showDeleteAction = !fromAdmin,
+                modifier = modifier
+            )
+        }
+
+        is SeoRouteDestination.OrganizerProfileStaff -> {
+            OrganizerProfileStaffScreen(
+                selectedNavTab = destination.activeTab,
+                onNavTabSelected = handleOrganizerNavTabSelected,
+                onSignOutClick = {
+                    currentDestination = SeoRouteDestination.SignIn
+                },
+                modifier = modifier
+            )
+        }
+
+        is SeoRouteDestination.AttendeeManagement -> {
+            AttendeeManagementScreen(
+                eventTitle = destination.eventTitle,
+                selectedNavTab = OrganizerNavTab.PEOPLE,
+                onNavTabSelected = handleOrganizerNavTabSelected,
+                onBackClick = {
+                    if (!isTicketingStaffOnly) {
+                        currentDestination = SeoRouteDestination.OrganizerDashboard
+                    }
+                },
+                onOpenScannerClick = {
+                    currentDestination = SeoRouteDestination.CheckInScanner
+                },
+                onSignOutClick = {
+                    currentDestination = SeoRouteDestination.SignIn
+                },
+                isTicketingStaffOnly = isTicketingStaffOnly,
+                modifier = modifier
+            )
+        }
+
+        is SeoRouteDestination.CheckInScanner -> {
+            CheckInScannerScreen(
+                onBackClick = {
+                    currentDestination = SeoRouteDestination.AttendeeManagement(
+                        eventTitle = OrganizerRepository.getCurrentAssignedEvent().title
+                    )
+                },
+                onScanSuccess = { attendee ->
+                    val eventTitle = OrganizerRepository.getCurrentAssignedEvent().title
+                    currentDestination = SeoRouteDestination.CheckInResult(
+                        attendeeName = attendee.name,
+                        eventTitle = eventTitle
+                    )
+                },
+                modifier = modifier
+            )
+        }
+
+        is SeoRouteDestination.CheckInResult -> {
+            CheckInResultScreen(
+                attendeeName = destination.attendeeName,
+                eventTitle = destination.eventTitle,
+                onScanNextTicketClick = {
+                    currentDestination = SeoRouteDestination.CheckInScanner
+                },
+                onBackToAttendeesClick = {
+                    currentDestination = SeoRouteDestination.AttendeeManagement(
+                        eventTitle = destination.eventTitle
+                    )
+                },
+                modifier = modifier
+            )
+        }
+
+        is SeoRouteDestination.AdminOverview -> {
+            AdminOverviewScreen(
+                selectedNavTab = AdminNavTab.OVERVIEW,
+                onNavTabSelected = handleAdminNavTabSelected,
+                onAddAgencyClick = {
+                    currentDestination = SeoRouteDestination.AdminManageOrganizers
+                },
+                onCreateEventClick = {
+                    previousOrganizerDestination = SeoRouteDestination.AdminConsole
+                    currentDestination = SeoRouteDestination.OrganizerCreateEditEvent(
+                        OrganizerRepository.createDefaultNewEvent()
+                    )
+                },
+                onSignOutClick = {
+                    currentDestination = SeoRouteDestination.SignIn
+                },
+                modifier = modifier
+            )
+        }
+
+        is SeoRouteDestination.AdminConsole -> {
+            AdminConsoleScreen(
+                selectedNavTab = AdminNavTab.EVENTS,
+                onNavTabSelected = handleAdminNavTabSelected,
+                onCreateEventClick = {
+                    previousOrganizerDestination = SeoRouteDestination.AdminConsole
+                    currentDestination = SeoRouteDestination.OrganizerCreateEditEvent(
+                        OrganizerRepository.createDefaultNewEvent()
+                    )
+                },
+                onEditEventClick = { event ->
+                    previousOrganizerDestination = SeoRouteDestination.AdminConsole
+                    currentDestination = SeoRouteDestination.OrganizerCreateEditEvent(event)
+                },
+                modifier = modifier
+            )
+        }
+
+        is SeoRouteDestination.AdminManageOrganizers -> {
+            AdminManageOrganizersScreen(
+                selectedNavTab = AdminNavTab.PEOPLE,
+                onNavTabSelected = handleAdminNavTabSelected,
                 modifier = modifier
             )
         }
@@ -536,6 +863,116 @@ fun Preview13Notifications1() {
 fun Preview20UserProfile1() {
     SeoRouteTheme {
         UserProfileScreen(
+            onNavTabSelected = {}
+        )
+    }
+}
+
+@Preview(name = "14_Organizer_dashboard 1", showBackground = true, widthDp = 390, heightDp = 844)
+@Composable
+fun Preview14OrganizerDashboard1() {
+    SeoRouteTheme {
+        OrganizerDashboardScreen(
+            onNavTabSelected = {},
+            onCreateEventClick = {},
+            onScanTicketClick = {},
+            onSeeAllEventsClick = {},
+            onEditEventClick = {}
+        )
+    }
+}
+
+@Preview(name = "View Events", showBackground = true, widthDp = 390, heightDp = 844)
+@Composable
+fun PreviewOrganizerViewEvents() {
+    SeoRouteTheme {
+        OrganizerViewEventsScreen(
+            onNavTabSelected = {},
+            onEditEventClick = {}
+        )
+    }
+}
+
+@Preview(name = "Create/Edit Event", showBackground = true, widthDp = 390, heightDp = 1349)
+@Composable
+fun PreviewCreateEditEvent() {
+    SeoRouteTheme {
+        CreateEditEventScreen(
+            onBackClick = {},
+            onSaveAndPublish = {},
+            onDeleteEvent = {}
+        )
+    }
+}
+
+@Preview(name = "Organizer Profile & Ticketing Staff", showBackground = true, widthDp = 390, heightDp = 958)
+@Composable
+fun PreviewOrganizerProfileStaff() {
+    SeoRouteTheme {
+        OrganizerProfileStaffScreen(
+            onNavTabSelected = {}
+        )
+    }
+}
+
+@Preview(name = "16_Attendee_management 1", showBackground = true, widthDp = 390, heightDp = 844)
+@Composable
+fun Preview16AttendeeManagement1() {
+    SeoRouteTheme {
+        AttendeeManagementScreen(
+            onNavTabSelected = {},
+            onBackClick = {}
+        )
+    }
+}
+
+@Preview(name = "17_Check_in_scanner 1", showBackground = true, widthDp = 390, heightDp = 844)
+@Composable
+fun Preview17CheckInScanner1() {
+    SeoRouteTheme {
+        CheckInScannerScreen(
+            onBackClick = {},
+            onScanSuccess = {}
+        )
+    }
+}
+
+@Preview(name = "18_Check_in_result 1", showBackground = true, widthDp = 390, heightDp = 844)
+@Composable
+fun Preview18CheckInResult1() {
+    SeoRouteTheme {
+        CheckInResultScreen(
+            onScanNextTicketClick = {},
+            onBackToAttendeesClick = {}
+        )
+    }
+}
+
+@Preview(name = "Overview Page", showBackground = true, widthDp = 390, heightDp = 844)
+@Composable
+fun PreviewAdminOverviewPage() {
+    SeoRouteTheme {
+        AdminOverviewScreen(
+            onNavTabSelected = {}
+        )
+    }
+}
+
+@Preview(name = "Console", showBackground = true, widthDp = 390, heightDp = 844)
+@Composable
+fun PreviewAdminConsole() {
+    SeoRouteTheme {
+        AdminConsoleScreen(
+            onNavTabSelected = {}
+        )
+    }
+}
+
+@Preview(name = "Add/Edit Organizers", showBackground = true, widthDp = 390, heightDp = 844)
+@Composable
+fun PreviewAdminManageOrganizers() {
+    SeoRouteTheme {
+        AdminManageOrganizersScreen(
             onNavTabSelected = {}
         )
     }
