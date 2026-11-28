@@ -377,8 +377,12 @@ fun SeoRouteApp(
         }
 
         is SeoRouteDestination.ConfirmBooking -> {
+            var submitting by remember(destination.event.id) { mutableStateOf(false) }
+            var bookingError by remember(destination.event.id) { mutableStateOf<String?>(null) }
             ConfirmBookingScreen(
                 event = destination.event,
+                submitting = submitting,
+                bookingError = bookingError,
                 onBackClick = {
                     currentDestination = if (destination.event.detailType == EventDetailType.MANAGED) {
                         SeoRouteDestination.ManagedEventDetail(destination.event)
@@ -387,19 +391,29 @@ fun SeoRouteApp(
                     }
                 },
                 onConfirmBooking = {
+                    if (submitting) return@ConfirmBookingScreen
+                    submitting = true
+                    bookingError = null
                     coroutineScope.launch {
                         val evt = destination.event
-                        if (evt.admissionType == "Free open") {
-                            SeoRouteApiClient.addInterest(evt.id)
+                        val result = if (evt.admissionType == "Free open") {
+                            SeoRouteApiClient.addInterest(evt.id).map { evt }
                         } else {
                             SeoRouteApiClient.bookEvent(
                                 eventId = evt.id,
                                 isPaid = !evt.isFree
-                            )
+                            ).map { it.event }
                         }
-                        SampleEvents.syncFromBackend()
+                        result.onSuccess { bookedEvent ->
+                            SampleEvents.syncFromBackend()
+                            if (currentDestination == destination) {
+                                currentDestination = SeoRouteDestination.BookingSuccess(bookedEvent)
+                            }
+                        }.onFailure {
+                            bookingError = it.message ?: "Could not confirm the booking."
+                        }
+                        submitting = false
                     }
-                    currentDestination = SeoRouteDestination.BookingSuccess(destination.event)
                 },
                 modifier = modifier
             )

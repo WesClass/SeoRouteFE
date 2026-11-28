@@ -34,8 +34,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -52,35 +55,10 @@ import com.example.seoroute.ui.theme.SeoPrimary
 import com.example.seoroute.ui.theme.SeoSurface
 import com.example.seoroute.ui.theme.SeoTextPrimary
 import com.example.seoroute.ui.theme.SeoTextSecondary
-
-// QR Code Matrix (Hardcoded)
-private val QR_MATRIX = listOf(
-    "1111111001001010101111111",
-    "1000001010011000101000001",
-    "1011101000000111101011101",
-    "1011101001010101001011101",
-    "1011101011000110001011101",
-    "1000001000111100001000001",
-    "1111111010101001001111111",
-    "0000000000110011000000000",
-    "1100000111100000111100000",
-    "1001010101001010101001010",
-    "0011000110011000110011000",
-    "0000111100000111100000111",
-    "1010101001010101001010101",
-    "1000110011000110011000110",
-    "0111100000111100000111100",
-    "0101001010101001010101001",
-    "0110011000110011000110011",
-    "0000000011100000111100000",
-    "1111111001001010101001010",
-    "1000001010011000110011000",
-    "1011101000000111100000111",
-    "1011101001010101001010101",
-    "1011101011000110011000110",
-    "1000001000111100000111100",
-    "1111111010101001010101001"
-)
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
+import kotlinx.coroutines.delay
+import kotlin.math.floor
 
 // Your Digital Ticket Page
 @Composable
@@ -90,19 +68,39 @@ fun DigitalTicketScreen(
     onDoneClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var dynamicBookingCode by remember(event.bookingCode) { mutableStateOf(event.bookingCode) }
+    val ticket = SampleEvents.myTickets.firstOrNull { it.event.id == event.id }
+    val session = SeoRouteApiClient.accessToken
+    var qrToken by remember(ticket?.id, session) { mutableStateOf<String?>(null) }
+    var qrError by remember(ticket?.id, session) { mutableStateOf<String?>(null) }
+    var retry by remember(ticket?.id, session) { mutableStateOf(0) }
 
-    LaunchedEffect(event.id) {
-        val matchedTicket = SampleEvents.myTickets.firstOrNull { it.event.id == event.id }
-        if (matchedTicket != null && !SeoRouteApiClient.accessToken.isNullOrBlank()) {
-            SeoRouteApiClient.fetchTicketQr(matchedTicket.id).onSuccess { qrPayload ->
-                val rotated = SeoRouteApiClient.generateDynamicQrToken(
-                    ticketId = qrPayload.ticketId,
-                    ticketSecret = qrPayload.ticketSecret,
-                    periodSecs = qrPayload.periodSecs
-                )
-                dynamicBookingCode = "HMAC QR · ${rotated.take(22)}..."
-            }
+    LaunchedEffect(ticket?.id, session, retry) {
+        qrError = null
+        qrToken = null
+        if (ticket == null || session.isNullOrBlank()) {
+            qrError = "Ticket QR unavailable."
+            return@LaunchedEffect
+        }
+        val payload = SeoRouteApiClient.fetchTicketQr(ticket.id).getOrElse {
+            qrError = "Could not load the ticket QR."
+            return@LaunchedEffect
+        }
+        if (payload.ticketId != ticket.id || payload.ticketSecret.isBlank() || payload.periodSecs <= 0 ||
+            payload.algorithm != "HMAC-SHA256"
+        ) {
+            qrError = "The server returned invalid ticket QR data."
+            return@LaunchedEffect
+        }
+        while (true) {
+            val now = System.currentTimeMillis()
+            qrToken = SeoRouteApiClient.generateDynamicQrToken(
+                ticketId = payload.ticketId,
+                ticketSecret = payload.ticketSecret,
+                periodSecs = payload.periodSecs,
+                unixTimeSeconds = now / 1000L
+            )
+            val millisToNextCode = (payload.periodSecs - now / 1000L % payload.periodSecs) * 1000L - now % 1000L
+            delay(millisToNextCode)
         }
     }
 
@@ -241,9 +239,19 @@ fun DigitalTicketScreen(
                                     .padding(10.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                TicketQrCodeCanvas(
-                                    modifier = Modifier.size(175.dp)
-                                )
+                                val token = qrToken
+                                if (token != null) {
+                                    TicketQrCodeCanvas(token, Modifier.size(175.dp))
+                                } else {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(qrError ?: "Loading ticket QR…", textAlign = TextAlign.Center)
+                                        if (qrError != null && ticket != null && !session.isNullOrBlank()) {
+                                            androidx.compose.material3.TextButton(onClick = { retry++ }) {
+                                                Text("Retry")
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -251,7 +259,7 @@ fun DigitalTicketScreen(
 
                         // Booking Code
                         Text(
-                            text = dynamicBookingCode,
+                            text = event.bookingCode,
                             color = SeoTextPrimary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
@@ -317,20 +325,21 @@ fun DigitalTicketScreen(
 }
 
 @Composable
-private fun TicketQrCodeCanvas(modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier) {
-        val gridSize = 25
-        val cellWidth = size.width / gridSize
-        val cellHeight = size.height / gridSize
-
-        for (row in 0 until gridSize) {
-            val rowStr = QR_MATRIX[row]
-            for (col in 0 until gridSize) {
-                if (rowStr[col] == '1') {
+private fun TicketQrCodeCanvas(token: String, modifier: Modifier = Modifier) {
+    // ZXing includes the four-module quiet zone in the returned matrix.
+    val matrix = remember(token) { QRCodeWriter().encode(token, BarcodeFormat.QR_CODE, 0, 0) }
+    Canvas(modifier = modifier.semantics { contentDescription = "Ticket check-in QR code" }) {
+        drawRect(Color.White)
+        val moduleSize = floor(size.minDimension / matrix.width)
+        val left = floor((size.width - matrix.width * moduleSize) / 2)
+        val top = floor((size.height - matrix.height * moduleSize) / 2)
+        for (row in 0 until matrix.height) {
+            for (column in 0 until matrix.width) {
+                if (matrix[column, row]) {
                     drawRect(
-                        color = SeoTextPrimary,
-                        topLeft = Offset(col * cellWidth, row * cellHeight),
-                        size = Size(cellWidth + 0.5f, cellHeight + 0.5f)
+                        color = Color.Black,
+                        topLeft = Offset(left + column * moduleSize, top + row * moduleSize),
+                        size = Size(moduleSize, moduleSize)
                     )
                 }
             }

@@ -905,6 +905,7 @@ object SeoRouteApiClient {
             detailTags = detailTags,
             category = vibeCategory,
             isFree = price == 0,
+            priceKrw = price,
             isOutdoor = isOutdoor,
             admissionType = admissionDisplay,
             detailSectionTitle = if (isManaged) "Event information" else "About this event",

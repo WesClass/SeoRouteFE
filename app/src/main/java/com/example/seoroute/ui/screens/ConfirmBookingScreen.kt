@@ -52,6 +52,8 @@ import com.example.seoroute.ui.theme.SeoPrimaryLight
 import com.example.seoroute.ui.theme.SeoSurface
 import com.example.seoroute.ui.theme.SeoTextPrimary
 import com.example.seoroute.ui.theme.SeoTextSecondary
+import java.text.NumberFormat
+import java.util.Locale
 
 // Confirm Booking Page
 @Composable
@@ -59,9 +61,17 @@ fun ConfirmBookingScreen(
     event: SeoEvent = SampleEvents.futureSeoulMeetup,
     onBackClick: () -> Unit,
     onConfirmBooking: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    submitting: Boolean = false,
+    bookingError: String? = null
 ) {
-    var agreedToTerms by remember { mutableStateOf(true) }
+    val isPaid = !event.isFree
+    var agreedToTerms by remember(event.id, isPaid) { mutableStateOf(!isPaid) }
+    val paidPrice = event.priceKrw?.takeIf { it > 0 }
+    val total = if (!isPaid) "FREE" else paidPrice?.let {
+        "₩" + NumberFormat.getIntegerInstance(Locale.KOREA).format(it)
+    } ?: "Unavailable"
+    val canConfirm = agreedToTerms && !submitting && (!isPaid || paidPrice != null)
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -92,7 +102,7 @@ fun ConfirmBookingScreen(
                     )
                     Spacer(modifier = Modifier.width(15.dp))
                     Text(
-                        text = "Confirm booking",
+                        text = if (isPaid) "Review and pay" else "Confirm booking",
                         color = SeoTextPrimary,
                         fontSize = 24.sp,
                         fontWeight = FontWeight.Bold,
@@ -160,7 +170,7 @@ fun ConfirmBookingScreen(
                                 )
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "Nov 17 · ${event.bookingShortTime}",
+                                    text = "${event.bookingShortDate} · ${event.bookingShortTime}",
                                     color = SeoTextSecondary,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Normal,
@@ -171,7 +181,8 @@ fun ConfirmBookingScreen(
 
                         // FREE pill at bottom right
                         EventBadgePill(
-                            tag = EventTagStyle("FREE", SeoGreenText, SeoGreenBg),
+                            tag = if (isPaid) EventTagStyle("PAID TICKET", SeoPrimary, SeoPrimaryLight)
+                            else EventTagStyle("FREE", SeoGreenText, SeoGreenBg),
                             minWidth = 58.dp,
                             height = 23.dp,
                             horizontalPadding = 14.dp,
@@ -264,8 +275,8 @@ fun ConfirmBookingScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "FREE",
-                                color = SeoGreenText,
+                                text = total,
+                                color = if (isPaid) SeoTextPrimary else SeoGreenText,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -292,7 +303,7 @@ fun ConfirmBookingScreen(
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             Text(
-                                text = "Before you reserve",
+                                text = if (isPaid) "Simulated payment" else "Before you reserve",
                                 color = SeoTextPrimary,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
@@ -300,7 +311,8 @@ fun ConfirmBookingScreen(
                         }
                         Spacer(modifier = Modifier.height(14.dp))
                         Text(
-                            text = "A digital ticket will appear in My Tickets.",
+                            text = if (isPaid) "No real charge. A digital ticket will appear in My Tickets after confirmation."
+                            else "A digital ticket will appear in My Tickets.",
                             color = SeoTextSecondary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Normal,
@@ -354,6 +366,10 @@ fun ConfirmBookingScreen(
                         fontWeight = FontWeight.Normal
                     )
                 }
+                val feedback = bookingError ?: if (isPaid && paidPrice == null) "Ticket price is unavailable." else null
+                if (feedback != null) {
+                    Text(feedback, color = androidx.compose.material3.MaterialTheme.colorScheme.error)
+                }
             }
 
             // Bottom CTA Button: "Confirm free reservation"
@@ -363,12 +379,17 @@ fun ConfirmBookingScreen(
                     .fillMaxWidth()
                     .height(56.dp)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(SeoPrimary)
-                    .clickable { onConfirmBooking() },
+                    .background(if (canConfirm) SeoPrimary else SeoTextSecondary)
+                    .clickable(enabled = canConfirm) { onConfirmBooking() },
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "Confirm free reservation",
+                    text = when {
+                        submitting -> "Confirming…"
+                        isPaid && paidPrice != null -> "Simulate payment · $total"
+                        isPaid -> "Payment unavailable"
+                        else -> "Confirm free reservation"
+                    },
                     color = SeoSurface,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,

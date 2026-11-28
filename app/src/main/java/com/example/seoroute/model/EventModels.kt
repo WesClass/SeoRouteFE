@@ -74,7 +74,8 @@ data class SeoEvent(
     val bookingShortDate: String = "Tuesday, Nov 17",
     val bookingShortTime: String = "2:00 PM",
     val ticketDateTime: String = "Nov 17, 2026 · 2:00 PM",
-    val bookingCode: String = "BOOKING #SEH-48291"
+    val bookingCode: String = "BOOKING #SEH-48291",
+    val priceKrw: Int? = null
 )
 
 data class BookedTicket(

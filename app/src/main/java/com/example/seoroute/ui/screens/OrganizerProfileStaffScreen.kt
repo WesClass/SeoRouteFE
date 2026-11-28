@@ -21,11 +21,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.seoroute.R
@@ -77,6 +83,75 @@ fun OrganizerProfileStaffScreen(
     var scannerStatusMessage by remember { mutableStateOf<String?>(null) }
     var isScanning by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
+    var showAddStaff by remember { mutableStateOf(false) }
+    var staffEmail by remember { mutableStateOf("") }
+    var addStaffError by remember { mutableStateOf<String?>(null) }
+    var staffRequestPending by remember { mutableStateOf(false) }
+    var staffLoaded by remember { mutableStateOf(false) }
+    var staffLoadError by remember { mutableStateOf<String?>(null) }
+    var staffLoadAttempt by remember { mutableStateOf(0) }
+    LaunchedEffect(currentUser?.userId, staffLoadAttempt) {
+        staffLoadError = null
+        staffLoaded = false
+        SeoRouteApiClient.fetchOrganizerStaff().onSuccess {
+            staffMembers.clear()
+            staffMembers.addAll(it)
+            staffLoaded = true
+        }.onFailure {
+            staffLoadError = it.message ?: "Could not load gate staff."
+        }
+    }
+    if (showAddStaff) {
+        AlertDialog(
+            onDismissRequest = { if (!staffRequestPending) showAddStaff = false },
+            title = { Text("Add gate staff") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Enter the email of someone who has already signed in to SeoRoute.")
+                    OutlinedTextField(
+                        value = staffEmail,
+                        onValueChange = { staffEmail = it; addStaffError = null },
+                        label = { Text("Email") },
+                        singleLine = true,
+                        enabled = !staffRequestPending,
+                        isError = addStaffError != null,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
+                    )
+                    addStaffError?.let { Text(it, color = Color(0xFFB91C1C)) }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !staffRequestPending,
+                    onClick = {
+                        val email = staffEmail.trim()
+                        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+                            addStaffError = "Enter a valid email address."
+                            return@TextButton
+                        }
+                        staffRequestPending = true
+                        addStaffError = null
+                        coroutineScope.launch {
+                            SeoRouteApiClient.addOrganizerStaff(email).onSuccess { added ->
+                                staffMembers.removeAll { it.id == added.id }
+                                staffMembers.add(added)
+                                staffActionFeedback = "Added ${added.internalEmail} as ticketing staff."
+                                showAddStaff = false
+                            }.onFailure {
+                                addStaffError = it.message ?: "Could not add gate staff."
+                            }
+                            staffRequestPending = false
+                        }
+                    }
+                ) { Text(if (staffRequestPending) "Adding…" else "Add staff") }
+            },
+            dismissButton = {
+                TextButton(enabled = !staffRequestPending, onClick = { showAddStaff = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
     val scannableEvents = OrganizerRepository.ticketingEvents.ifEmpty {
         OrganizerRepository.allOrganizerEvents
     }
@@ -359,28 +434,11 @@ fun OrganizerProfileStaffScreen(
                         .width(147.dp)
                         .clip(RoundedCornerShape(50))
                         .background(OrgPurple)
-                        .clickable {
-                            val candidateEmail = if (staffMembers.none {
-                                    it.internalEmail.equals("gate2@hanganglive.example", ignoreCase = true)
-                                }
-                            ) {
-                                "gate2@hanganglive.example"
-                            } else {
-                                "attendee2@example.com"
-                            }
-                            coroutineScope.launch {
-                                SeoRouteApiClient.addOrganizerStaff(candidateEmail)
-                                    .onSuccess { added ->
-                                        if (staffMembers.none { it.id == added.id }) {
-                                            staffMembers.add(added)
-                                        }
-                                        staffActionFeedback = "Added ${added.internalEmail} as ticketing staff"
-                                    }
-                                    .onFailure {
-                                        OrganizerRepository.addDummyGateStaff()
-                                        staffActionFeedback = "Added gate staff account"
-                                    }
-                            }
+                        .clickable(enabled = staffLoaded && !staffRequestPending) {
+                            staffEmail = ""
+                            addStaffError = null
+                            staffActionFeedback = null
+                            showAddStaff = true
                         }
                         .padding(vertical = 6.dp, horizontal = 14.dp),
                     contentAlignment = Alignment.Center
@@ -413,8 +471,16 @@ fun OrganizerProfileStaffScreen(
             Column(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                staffMembers.forEach { staff ->
-                    val canRemove = staff.role != "organizer"
+                if (!staffLoaded) {
+                    Text(staffLoadError ?: "Loading staff…")
+                    if (staffLoadError != null) {
+                        TextButton(onClick = { staffLoadAttempt++ }) { Text("Retry") }
+                    }
+                } else if (staffMembers.isEmpty()) {
+                    Text("No staff accounts found.")
+                }
+                staffMembers.filter { staffLoaded }.forEach { staff ->
+                    val canRemove = staff.role == "ticketing" && !staffRequestPending
                     GateStaffItemCard(
                         staff = staff,
                         canDelete = canRemove,
@@ -429,6 +495,8 @@ fun OrganizerProfileStaffScreen(
                             }
                         },
                         onDeleteStaff = {
+                            staffRequestPending = true
+                            staffActionFeedback = null
                             coroutineScope.launch {
                                 SeoRouteApiClient.deleteOrganizerStaff(staff.id)
                                     .onSuccess {
@@ -436,9 +504,9 @@ fun OrganizerProfileStaffScreen(
                                         staffActionFeedback = "Removed ${staff.internalEmail} from gate staff"
                                     }
                                     .onFailure {
-                                        OrganizerRepository.removeGateStaffLocal(staff.id)
-                                        staffActionFeedback = "Removed ${staff.internalEmail}"
+                                        staffActionFeedback = it.message ?: "Could not remove gate staff."
                                     }
+                                staffRequestPending = false
                             }
                         }
                     )
